@@ -1,0 +1,9 @@
+- name: chock_live
+  _target_: chock_surgeon.live.LiveChockAgentLoop
+  parser: qwen
+  provider: surgeon
+  chock_bin: chock
+  timeout_seconds: 3600
+
+- name: chock_captured
+  _target_: chock_surgeon.verl_adapter.CapturedChockAgentLoop

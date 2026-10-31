@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chock-surgeon"
+version = "0.1.0"
+description = "Perform RL and neuron steering for LLMs used in Chock"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = []
+
+[project.optional-dependencies]
+train = ["verl"]
+steer = ["torch", "transformers"]
+
+[project.scripts]
+chock-surgeon = "chock_surgeon.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+chock_surgeon = ["configs/*.yaml"]
+
+[tool.unittest]
+start-directory = "tests"
