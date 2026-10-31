@@ -229,7 +229,7 @@
               ];
               autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
             })) "${python.sitePackages}/nvidia/nvshmem/lib";
-            nvidia-cusparselt-cu13 = exposeWheelLibraries prev.nvidia-cusparselt-cu13 "${python.sitePackages}/nvidia/cu13/lib";
+            nvidia-cusparselt-cu13 = exposeWheelLibraries prev.nvidia-cusparselt-cu13 "${python.sitePackages}/nvidia/cusparselt/lib";
             nvidia-cusparse = exposeWheelLibraries (prev.nvidia-cusparse.overrideAttrs (old: {
               buildInputs = (old.buildInputs or [ ]) ++ [ final.nvidia-nvjitlink ];
               runtimeDependencies = (old.runtimeDependencies or [ ]) ++ [
