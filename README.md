@@ -11,6 +11,8 @@ them to trainers and inference engines such as veRL and SGLang.
 chock-surgeon validate rollouts/run-001/dataset.json --split train
 chock-surgeon inspect rollouts/run-001/case-0-rollout-0.trajectory.json
 chock-surgeon export-verl rollouts/run-001/dataset.json train.jsonl
+chock-surgeon skill inspect skills/review-a-diff
+chock-surgeon skill collect skills/review-a-diff --split train --output rollouts/review-train
 ```
 
 The base package has no third-party runtime dependencies. Install the `train`
@@ -27,9 +29,9 @@ It is generated from veRL's uv lock with uv2nix and includes the CUDA-enabled
 PyTorch and vLLM stack. Model weights and experiment outputs remain external
 to the repository.
 
-See [docs/](docs/README.md) for the artifact contract, training integration,
-neuron steering, weight transforms, and reproducible experiment design, one
-page per subject.
+See [docs/](docs/README.md) for the artifact contract, trainable skills,
+training integration, neuron steering, weight transforms, and reproducible
+experiment design, one page per subject.
 
 The implementation is still being assembled. Local Transformers steering is
 implemented, while SGLang/vLLM steering requires an engine-side hook before it

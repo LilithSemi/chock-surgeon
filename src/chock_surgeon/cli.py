@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 
 from .trajectory import ChockDataset, ChockTrajectory, ContractError
+from .skills import collect_skill, inspect_skill
 from .transforms import HereticPlan, TransformError, run_heretic
 from .verl_adapter import agent_loop_config_path, dataset_rows
 
@@ -31,6 +32,17 @@ def _parser() -> argparse.ArgumentParser:
     heretic.add_argument("output", type=Path)
     heretic.add_argument("--executable", default="heretic")
     heretic.add_argument("--timeout", type=float, default=24 * 60 * 60)
+    skill = commands.add_parser("skill", help="inspect or collect a Chock training skill")
+    skill_commands = skill.add_subparsers(dest="skill_command", required=True)
+    skill_inspect = skill_commands.add_parser("inspect", help="verify a skill's training contract")
+    skill_inspect.add_argument("skill_dir", type=Path)
+    skill_inspect.add_argument("--chock-bin", default="chock")
+    collect = skill_commands.add_parser("collect", help="run one skill suite and bind its dataset")
+    collect.add_argument("skill_dir", type=Path)
+    collect.add_argument("--split", choices=("train", "validation", "test"), required=True)
+    collect.add_argument("--output", type=Path, required=True)
+    collect.add_argument("--parallel", type=int)
+    collect.add_argument("--chock-bin", default="chock")
     commands.add_parser("verl-config", help="print the installed veRL agent-loop configuration path")
     return parser
 
@@ -97,6 +109,29 @@ def main(argv: list[str] | None = None) -> int:
                 "manifest_sha256": result.manifest_sha256,
                 "elapsed_seconds": result.elapsed_seconds,
             }
+        elif args.command == "skill":
+            if args.skill_command == "inspect":
+                contract = inspect_skill(args.skill_dir, chock_bin=args.chock_bin)
+                summary = contract.document()
+            else:
+                collected = collect_skill(
+                    args.skill_dir,
+                    split=args.split,
+                    output=args.output,
+                    parallelism=args.parallel,
+                    chock_bin=args.chock_bin,
+                )
+                summary = {
+                    "schema": "chock-surgeon.skill-collection",
+                    "version": 1,
+                    "skill": collected.contract.skill,
+                    "adapter": collected.contract.adapter,
+                    "split": collected.split,
+                    "dataset": str(collected.dataset),
+                    "dataset_sha256": collected.dataset_sha256,
+                    "receipt": str(collected.receipt),
+                    "entries": collected.entries,
+                }
         else:
             print(agent_loop_config_path())
             return 0

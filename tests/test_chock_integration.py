@@ -10,6 +10,32 @@ import unittest
 
 from chock_surgeon.bridge import VerlOpenAIBridge
 from chock_surgeon.live import run_chock_eval
+from chock_surgeon.skills import inspect_skill
+
+
+@unittest.skipUnless(os.environ.get("CHOCK_INTEGRATION_BIN"), "set CHOCK_INTEGRATION_BIN to run Chock integration")
+class SkillIntegrationTests(unittest.TestCase):
+    def test_real_chock_contract_is_consumed_by_surgeon(self) -> None:
+        chock = Path(os.environ["CHOCK_INTEGRATION_BIN"]).expanduser().resolve(strict=True)
+        with tempfile.TemporaryDirectory() as temporary:
+            skill = Path(temporary) / "review-a-diff"
+            evals = skill / "evals"
+            evals.mkdir(parents=True)
+            (skill / "SKILL.md").write_text(
+                "---\nname: review-a-diff\ndescription: Review one diff.\n---\n\n# Review a diff\n"
+            )
+            (skill / "training.zon").write_text(
+                ".{ .skill = \"review-a-diff\", .mode = .hybrid, .adapter = \"review\", "
+                ".suites = .{ .train = \"evals/train.zon\", .validation = \"evals/validation.zon\", "
+                ".@\"test\" = \"evals/test.zon\" } }\n"
+            )
+            for split in ("train", "validation", "test"):
+                (evals / f"{split}.zon").write_text(f'.{{ .name = "{split}" }}\n')
+
+            contract = inspect_skill(skill, chock_bin=str(chock))
+            self.assertEqual("review-a-diff", contract.skill)
+            self.assertEqual("hybrid", contract.mode)
+            self.assertEqual(64, len(contract.suites["test"].sha256))
 
 
 class SmokeTokenizer:

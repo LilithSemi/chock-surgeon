@@ -4,12 +4,18 @@ Start with [training.md](training.md) to connect Chock to veRL, and
 [artifacts.md](artifacts.md) for the trajectory contract between the two
 projects.
 
+For reusable behavior packages, [SKILLS.md](SKILLS.md) explains the shared
+`SKILL.md` and `training.zon` contract, split collection, and provenance
+receipts.
+
 ## Training and rollout data
 
 - [training.md](training.md) - captured and live veRL agent loops, the
   OpenAI-compatible rollout bridge, and binding trainer provenance into Chock.
 - [artifacts.md](artifacts.md) - verification of Chock trajectories and
   datasets, token masks, rollout log probabilities, and grouped rollouts.
+- [SKILLS.md](SKILLS.md) - trainable Chock skills, held-out suites, collection,
+  and integrity-bound dataset receipts.
 
 ## Model interventions
 
