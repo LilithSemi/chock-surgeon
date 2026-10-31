@@ -270,7 +270,16 @@
                 final.nvidia-cusparse
                 final.nvidia-nccl-cu13
               ];
-              autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
+              # CuPy ships optional cuTENSOR bindings in the CUDA wheel even
+              # when cuTENSOR itself is not installed. veRL does not select
+              # those bindings, so keep them optional instead of making the
+              # entire training environment depend on a separate cuTENSOR
+              # distribution.
+              autoPatchelfIgnoreMissingDeps = [
+                "libcuda.so.1"
+                "libcutensor.so.2"
+                "libcutensorMg.so.2"
+              ];
             });
             nccl-extensions = prev.nccl-extensions.overrideAttrs (old: {
               buildInputs = (old.buildInputs or [ ]) ++ [ final.nvidia-nccl-cu13 ];
