@@ -151,6 +151,9 @@
               ];
               autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
             });
+            numba = prev.numba.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.tbb ];
+            });
             antlr4-python3-runtime = prev.antlr4-python3-runtime.overrideAttrs (old: {
               nativeBuildInputs =
                 (old.nativeBuildInputs or [ ])
