@@ -431,7 +431,12 @@
               UV_NO_SYNC = "1";
               UV_PYTHON = "${verlEnv}/bin/python";
               UV_PYTHON_DOWNLOADS = "never";
-              LD_LIBRARY_PATH = "${lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]}:/run/opengl-driver/lib";
+              LD_LIBRARY_PATH = "${verlEnv}/lib:${
+                lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]
+              }:/run/opengl-driver/lib";
+              # Triton's NVIDIA backend otherwise shells out to the FHS-only
+              # /sbin/ldconfig path before it considers LD_LIBRARY_PATH.
+              TRITON_LIBCUDA_PATH = "/run/opengl-driver/lib";
             };
             shellHook = ''
               unset PYTHONPATH
