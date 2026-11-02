@@ -25,6 +25,10 @@
       url = "github:verl-project/verl/8df5baeed0f5ecdd7f870d83bc3d79194816e2a9";
       flake = false;
     };
+    heretic-src = {
+      url = "github:p-e-w/heretic/ecde93f1e012bb344ac45de5cbd1027275f8b136";
+      flake = false;
+    };
   };
 
   outputs =
@@ -37,6 +41,7 @@
       uv2nix,
       pyproject-build-systems,
       verl-src,
+      heretic-src,
       ...
     }@inputs:
     let
@@ -77,6 +82,14 @@
       treefmtEval = forAllSystems ({ pkgs, ... }: treefmt-nix.lib.evalModule pkgs (import ./treefmt.nix));
 
       verlWorkspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = verl-src; };
+      # Heretic's upstream lock deliberately selects CPU-only PyTorch for CI.
+      # Keep the upstream source tree, but use our CUDA 13 lock so the model
+      # surgery environment is both reproducible and actually GPU-capable.
+      hereticWorkspace = uv2nix.lib.workspace.loadWorkspace {
+        workspaceRoot = heretic-src;
+        uvLock = builtins.fromTOML (builtins.readFile ./nix/heretic/uv.lock);
+        pyproject = builtins.fromTOML (builtins.readFile ./nix/heretic/pyproject.toml);
+      };
 
       mkVerlEnv =
         pkgs:
@@ -395,6 +408,167 @@
         (pythonSet.mkVirtualEnv "chock-surgeon-verl-env" verlDependencies).overrideAttrs (_old: {
           venvSkip = [ "lib/python${python.pythonVersion}/site-packages/build_backend.py" ];
         });
+
+      mkHereticEnv =
+        pkgs:
+        let
+          hereticDependencies = {
+            "heretic-llm" = [ ];
+          };
+          python = pkgs.python312;
+          cudaWheelRoot = package: "${package}/${python.sitePackages}/nvidia/cu13";
+          torchWheelRoot = package: "${package}/${python.sitePackages}/torch";
+          exposeWheelLibraries =
+            package: relativePath:
+            package.overrideAttrs (old: {
+              postInstall = (old.postInstall or "") + ''
+                mkdir -p "$out/lib"
+                for library in "$out/${relativePath}"/*.so*; do
+                  ln -sf "$library" "$out/lib/$(basename "$library")"
+                done
+              '';
+            });
+          pythonBase = pkgs.callPackage pyproject-nix.build.packages { inherit python; };
+          wheelOverrides = final: prev: {
+            langdetect = prev.langdetect.overrideAttrs (old: {
+              nativeBuildInputs =
+                (old.nativeBuildInputs or [ ])
+                ++ final.resolveBuildSystem {
+                  setuptools = [ ];
+                };
+            });
+            sqlitedict = prev.sqlitedict.overrideAttrs (old: {
+              nativeBuildInputs =
+                (old.nativeBuildInputs or [ ])
+                ++ final.resolveBuildSystem {
+                  setuptools = [ ];
+                };
+            });
+            rouge-score = prev.rouge-score.overrideAttrs (old: {
+              nativeBuildInputs =
+                (old.nativeBuildInputs or [ ])
+                ++ final.resolveBuildSystem {
+                  setuptools = [ ];
+                };
+            });
+            word2number = prev.word2number.overrideAttrs (old: {
+              nativeBuildInputs =
+                (old.nativeBuildInputs or [ ])
+                ++ final.resolveBuildSystem {
+                  setuptools = [ ];
+                };
+            });
+            bitsandbytes = prev.bitsandbytes.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [
+                final.nvidia-cublas
+                final.nvidia-cuda-runtime
+              ];
+              runtimeDependencies = (old.runtimeDependencies or [ ]) ++ [
+                (cudaWheelRoot final.nvidia-cublas)
+                (cudaWheelRoot final.nvidia-cuda-runtime)
+              ];
+              # The wheel carries kernels for many CUDA generations, and ROCm
+              # and Intel XPU backends this environment has no runtime for.
+              # Keep the locked CUDA 13.0 kernel and the CPU fallback.
+              postInstall = (old.postInstall or "") + ''
+                find "$out/${python.sitePackages}/bitsandbytes" \
+                  -maxdepth 1 -name 'libbitsandbytes_*.so' \
+                  ! -name 'libbitsandbytes_cuda130.so' \
+                  ! -name 'libbitsandbytes_cpu.so' -delete
+              '';
+              autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
+            });
+            nvidia-nvjitlink = exposeWheelLibraries prev.nvidia-nvjitlink "${python.sitePackages}/nvidia/cu13/lib";
+            nvidia-cublas = exposeWheelLibraries prev.nvidia-cublas "${python.sitePackages}/nvidia/cu13/lib";
+            nvidia-cuda-runtime = exposeWheelLibraries prev.nvidia-cuda-runtime "${python.sitePackages}/nvidia/cu13/lib";
+            nvidia-cuda-nvrtc = exposeWheelLibraries prev.nvidia-cuda-nvrtc "${python.sitePackages}/nvidia/cu13/lib";
+            nvidia-cuda-cupti = exposeWheelLibraries prev.nvidia-cuda-cupti "${python.sitePackages}/nvidia/cu13/lib";
+            nvidia-nccl-cu13 = exposeWheelLibraries prev.nvidia-nccl-cu13 "${python.sitePackages}/nvidia/nccl/lib";
+            nvidia-curand = exposeWheelLibraries prev.nvidia-curand "${python.sitePackages}/nvidia/cu13/lib";
+            nvidia-cufile = exposeWheelLibraries (prev.nvidia-cufile.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.rdma-core ];
+            })) "${python.sitePackages}/nvidia/cu13/lib";
+            nvidia-nvshmem-cu13 = exposeWheelLibraries (prev.nvidia-nvshmem-cu13.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [
+                pkgs.libfabric
+                pkgs.openmpi
+                pkgs.rdma-core
+                pkgs.ucx
+              ];
+              autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
+            })) "${python.sitePackages}/nvidia/nvshmem/lib";
+            nvidia-cusparselt-cu13 = exposeWheelLibraries prev.nvidia-cusparselt-cu13 "${python.sitePackages}/nvidia/cusparselt/lib";
+            nvidia-cusparse = exposeWheelLibraries (prev.nvidia-cusparse.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [ final.nvidia-nvjitlink ];
+              runtimeDependencies = (old.runtimeDependencies or [ ]) ++ [
+                (cudaWheelRoot final.nvidia-nvjitlink)
+              ];
+            })) "${python.sitePackages}/nvidia/cu13/lib";
+            nvidia-cusolver = exposeWheelLibraries (prev.nvidia-cusolver.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [
+                final.nvidia-cublas
+                final.nvidia-cusparse
+                final.nvidia-nvjitlink
+              ];
+              runtimeDependencies = (old.runtimeDependencies or [ ]) ++ [
+                (cudaWheelRoot final.nvidia-cublas)
+                (cudaWheelRoot final.nvidia-cusparse)
+                (cudaWheelRoot final.nvidia-nvjitlink)
+              ];
+            })) "${python.sitePackages}/nvidia/cu13/lib";
+            nvidia-cudnn-cu13 = exposeWheelLibraries (prev.nvidia-cudnn-cu13.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [ final.nvidia-cublas ];
+              runtimeDependencies = (old.runtimeDependencies or [ ]) ++ [
+                (cudaWheelRoot final.nvidia-cublas)
+              ];
+            })) "${python.sitePackages}/nvidia/cudnn/lib";
+            nvidia-cufft = exposeWheelLibraries (prev.nvidia-cufft.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [ final.nvidia-nvjitlink ];
+              runtimeDependencies = (old.runtimeDependencies or [ ]) ++ [
+                (cudaWheelRoot final.nvidia-nvjitlink)
+              ];
+            })) "${python.sitePackages}/nvidia/cu13/lib";
+            torch = exposeWheelLibraries (prev.torch.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [
+                final.nvidia-cublas
+                final.nvidia-cuda-cupti
+                final.nvidia-cuda-nvrtc
+                final.nvidia-cuda-runtime
+                final.nvidia-cudnn-cu13
+                final.nvidia-cufft
+                final.nvidia-cufile
+                final.nvidia-curand
+                final.nvidia-cusolver
+                final.nvidia-cusparse
+                final.nvidia-cusparselt-cu13
+                final.nvidia-nccl-cu13
+                final.nvidia-nvshmem-cu13
+              ];
+              autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
+            })) "${python.sitePackages}/torch/lib";
+            torchvision = prev.torchvision.overrideAttrs (old: {
+              buildInputs = (old.buildInputs or [ ]) ++ [
+                final.torch
+                final.nvidia-cuda-runtime
+              ];
+              runtimeDependencies = (old.runtimeDependencies or [ ]) ++ [
+                (torchWheelRoot final.torch)
+                (cudaWheelRoot final.nvidia-cuda-runtime)
+              ];
+            });
+            triton = prev.triton.overrideAttrs (_old: {
+              autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
+            });
+          };
+          pythonSet = pythonBase.overrideScope (
+            lib.composeManyExtensions [
+              pyproject-build-systems.overlays.wheel
+              (hereticWorkspace.mkPyprojectOverlay { sourcePreference = "wheel"; })
+              wheelOverrides
+            ]
+          );
+        in
+        pythonSet.mkVirtualEnv "chock-surgeon-heretic-env" hereticDependencies;
     in
     {
       versionTemplate = "0.1.0-<lastModifiedDate>-<rev>";
@@ -415,8 +589,15 @@
         { pkgs, ... }:
         let
           verlEnv = mkVerlEnv pkgs;
+          hereticEnv = mkHereticEnv pkgs;
           trainCli = pkgs.writeShellScriptBin "chock-surgeon" ''
             exec ${verlEnv}/bin/python -m chock_surgeon.cli "$@"
+          '';
+          hereticCli = pkgs.writeShellScriptBin "heretic" ''
+            export LD_LIBRARY_PATH="${hereticEnv}/lib:${
+              lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]
+            }:/run/opengl-driver/lib"
+            exec ${hereticEnv}/bin/heretic "$@"
           '';
         in
         {
@@ -427,6 +608,7 @@
             name = "chock-surgeon-verl";
             packages = [
               trainCli
+              hereticCli
               verlEnv
               pkgs.uv
             ];
@@ -447,6 +629,16 @@
               export PYTHONPATH="$CHOCK_SURGEON_ROOT/src"
             '';
           };
+          heretic = pkgs.mkShell {
+            name = "chock-surgeon-heretic";
+            packages = [ hereticEnv ];
+            env.LD_LIBRARY_PATH = "${hereticEnv}/lib:${
+              lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]
+            }:/run/opengl-driver/lib";
+            shellHook = ''
+              unset PYTHONPATH
+            '';
+          };
         }
       );
 
@@ -457,6 +649,17 @@
         }
         // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           verl-env = mkVerlEnv pkgs;
+          heretic-env = mkHereticEnv pkgs;
+          heretic-cli =
+            let
+              hereticEnv = mkHereticEnv pkgs;
+            in
+            pkgs.writeShellScriptBin "heretic" ''
+              export LD_LIBRARY_PATH="${hereticEnv}/lib:${
+                lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]
+              }:/run/opengl-driver/lib"
+              exec ${hereticEnv}/bin/heretic "$@"
+            '';
         }
       );
 

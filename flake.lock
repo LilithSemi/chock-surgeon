@@ -15,6 +15,23 @@
         "type": "github"
       }
     },
+    "heretic-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1793464674,
+        "narHash": "sha256-kQzeFD2IcA9aVuNA3zCOZU2bBhcByQ05+qAQqzfVvis=",
+        "owner": "p-e-w",
+        "repo": "heretic",
+        "rev": "ecde93f1e012bb344ac45de5cbd1027275f8b136",
+        "type": "github"
+      },
+      "original": {
+        "owner": "p-e-w",
+        "repo": "heretic",
+        "rev": "ecde93f1e012bb344ac45de5cbd1027275f8b136",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1793473069,
@@ -79,6 +96,7 @@
     "root": {
       "inputs": {
         "flakever": "flakever",
+        "heretic-src": "heretic-src",
         "nixpkgs": "nixpkgs",
         "pyproject-build-systems": "pyproject-build-systems",
         "pyproject-nix": "pyproject-nix",

@@ -14,12 +14,20 @@ Surgeon separates two workflows:
   parameters together with the objective dataset and optimizer settings that
   produced them.
 
-The Heretic workflow is available through an external executable:
+The pinned CUDA 13 Heretic environment is available on Linux through the
+training shell. The shell supplies a wrapper which keeps Heretic's PyTorch
+libraries isolated from veRL's independently pinned training stack:
 
 ```console
+nix develop .#train
 chock-surgeon heretic plan.json config.toml output/Qwen-heretic \
   --executable heretic
 ```
+
+Use `nix develop .#heretic` when working with Heretic directly, or build the
+standalone wrapper with `nix build .#heretic-cli`. Heretic's upstream source is
+pinned in `flake.lock`; `nix/heretic/uv.lock` selects hashed CUDA 13 wheels
+instead of upstream's deliberately CPU-only CI lock.
 
 The plan pins the model revision, config SHA-256, seed, number of Optuna trials,
 startup trials, selected Pareto-front trial, and merge/adapter export strategy.
