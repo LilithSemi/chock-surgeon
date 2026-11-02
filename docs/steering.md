@@ -8,13 +8,17 @@ in Chock's `provenance.intervention_sha256` field.
 
 For Hugging Face Qwen models,
 `chock_surgeon.steering.install_qwen_steering` reproduces the Neuron Persona
-Library intervention with two passes:
+Library intervention in three steps:
 
 1. Run an unsteered prompt prefill and measure the median residual-stream norm
    after each selected layer, excluding token 0.
 2. Compute `c = dose × residual_norm / norm(W_down[:, neuron])`.
 3. Add `c` to that neuron's `down_proj` input during prefill and every generated
    token. This adds `c × W_down[:, neuron]` to the residual stream.
+
+The installer resolves the decoder stack through both a raw Transformers model
+and a PEFT adapter wrapper, so the same profile can be evaluated on a trained
+LoRA without merging it into the base checkpoint first.
 
 The returned context manager records the measured norms and coefficients and
 removes every hook when the rollout ends. It refuses a checkpoint revision,

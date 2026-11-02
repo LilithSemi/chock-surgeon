@@ -170,6 +170,28 @@ def steering_coefficient(dose: float, residual_norm: float, direction_norm: floa
     return dose * residual_norm / direction_norm
 
 
+def _qwen_layers(model: Any) -> Any:
+    """Resolve the decoder stack through Transformers and PEFT wrappers."""
+
+    candidates = [model]
+    get_base_model = getattr(model, "get_base_model", None)
+    if callable(get_base_model):
+        base = get_base_model()
+        if base is not model:
+            candidates.insert(0, base)
+    for candidate in candidates:
+        current = candidate
+        for _depth in range(4):
+            layers = getattr(current, "layers", None)
+            if layers is not None:
+                return layers
+            nested = getattr(current, "model", None)
+            if nested is None or nested is current:
+                break
+            current = nested
+    raise SteeringError("model does not expose Qwen decoder layers through its model wrapper")
+
+
 class SteeringSession:
     """Installed hooks and their auditable calibration values."""
 
@@ -221,10 +243,7 @@ def install_qwen_steering(
         raise SteeringError(
             "loaded checkpoint/revision does not exactly match the steering profile"
         )
-    try:
-        layers = model.model.layers
-    except AttributeError as error:
-        raise SteeringError("model does not expose Qwen layers at model.layers") from error
+    layers = _qwen_layers(model)
     if len(layers) != profile.num_layers:
         raise SteeringError(
             f"profile expects {profile.num_layers} layers, loaded model has {len(layers)}"

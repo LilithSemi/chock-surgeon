@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
-from chock_surgeon.steering import SteeringError, SteeringProfile, steering_coefficient
+from chock_surgeon.steering import (
+    SteeringError,
+    SteeringProfile,
+    _qwen_layers,
+    steering_coefficient,
+)
 
 
 def profile_value() -> dict:
@@ -25,6 +31,19 @@ def profile_value() -> dict:
 
 
 class SteeringProfileTests(unittest.TestCase):
+    def test_qwen_layers_resolves_raw_and_wrapped_models(self) -> None:
+        layers = [object(), object()]
+        raw = SimpleNamespace(model=SimpleNamespace(layers=layers))
+        wrapped = SimpleNamespace(model=raw)
+        peft = SimpleNamespace(get_base_model=lambda: raw, model=wrapped)
+        self.assertIs(layers, _qwen_layers(raw))
+        self.assertIs(layers, _qwen_layers(wrapped))
+        self.assertIs(layers, _qwen_layers(peft))
+
+    def test_qwen_layers_rejects_unknown_layout(self) -> None:
+        with self.assertRaisesRegex(SteeringError, "decoder layers"):
+            _qwen_layers(SimpleNamespace())
+
     def test_neuron_persona_normalization_formula(self) -> None:
         self.assertEqual(6.0, steering_coefficient(1.5, 8.0, 2.0))
         with self.assertRaisesRegex(SteeringError, "direction_norm must be positive"):
