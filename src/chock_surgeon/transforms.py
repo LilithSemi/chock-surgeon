@@ -192,6 +192,15 @@ async def run_heretic(
             process.kill()
             await process.wait()
             raise TransformError(f"Heretic exceeded {timeout_seconds:g} seconds") from error
+        except asyncio.CancelledError:
+            # asyncio.run() cancels this task when the operator presses Ctrl-C.
+            # Reap the transform before propagating cancellation so a GPU-heavy
+            # Heretic process is not orphaned and its transport does not outlive
+            # the event loop.
+            if process.returncode is None:
+                process.kill()
+            await process.wait()
+            raise
         (work / "stdout.log").write_bytes(stdout)
         (work / "stderr.log").write_bytes(stderr)
         if process.returncode != 0:

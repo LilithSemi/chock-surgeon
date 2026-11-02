@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import os
 from pathlib import Path
 import stat
 import sys
@@ -23,6 +25,19 @@ output = Path(option("--save-directory"))
 output.mkdir()
 (output / "model.safetensors").write_bytes(b"transformed")
 (output / "revision.txt").write_text(option("--model-commit"))
+'''
+
+SLOW_HERETIC = r'''#!/usr/bin/env python3
+from pathlib import Path
+import os
+import sys
+import time
+
+def option(name):
+    return sys.argv[sys.argv.index(name) + 1]
+
+Path(option("--save-directory") + ".pid").write_text(str(os.getpid()))
+time.sleep(60)
 '''
 
 
@@ -88,6 +103,42 @@ class TransformTests(unittest.IsolatedAsyncioTestCase):
             )
             with self.assertRaisesRegex(TransformError, "digest does not match"):
                 await run_heretic(plan, config=config, output=root / "output")
+
+    async def test_cancellation_reaps_the_transform(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = root / "config.toml"
+            config.write_text("batch_size = 1\n")
+            plan = HereticPlan(
+                model="Qwen/test",
+                revision="revision",
+                config_sha256=hashlib.sha256(config.read_bytes()).hexdigest(),
+                seed=1,
+                n_trials=1,
+                n_startup_trials=1,
+                trial_index=0,
+            )
+            executable = root / "heretic"
+            executable.write_text(
+                textwrap.dedent(SLOW_HERETIC).replace("#!/usr/bin/env python3", f"#!{sys.executable}", 1)
+            )
+            executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+            output = root / "output"
+            task = asyncio.create_task(
+                run_heretic(plan, config=config, output=output, executable=str(executable))
+            )
+            pid_file = output.with_name(output.name + ".pid")
+            for _ in range(100):
+                if pid_file.exists():
+                    break
+                await asyncio.sleep(0.01)
+            self.assertTrue(pid_file.exists())
+            pid = int(pid_file.read_text())
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
 
 
 if __name__ == "__main__":
