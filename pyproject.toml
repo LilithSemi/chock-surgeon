@@ -14,6 +14,7 @@ dependencies = []
 [project.optional-dependencies]
 train = ["verl"]
 steer = ["torch", "transformers"]
+serve = ["torch", "transformers", "peft", "fastapi", "uvicorn"]
 
 [project.scripts]
 chock-surgeon = "chock_surgeon.cli:main"

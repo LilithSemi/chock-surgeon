@@ -44,6 +44,15 @@ def _parser() -> argparse.ArgumentParser:
     collect.add_argument("--parallel", type=int)
     collect.add_argument("--chock-bin", default="chock")
     commands.add_parser("verl-config", help="print the installed veRL agent-loop configuration path")
+    serve = commands.add_parser("serve", help="serve a steered PEFT model through OpenAI Chat Completions")
+    serve.add_argument("--model", type=Path, required=True)
+    serve.add_argument("--adapter", type=Path, required=True)
+    serve.add_argument("--steering-profile", type=Path, required=True)
+    serve.add_argument("--model-name", default="haruka-qwen3.5-4b")
+    serve.add_argument("--persona", type=Path)
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=5000)
+    serve.add_argument("--api-key")
     return parser
 
 
@@ -132,8 +141,26 @@ def main(argv: list[str] | None = None) -> int:
                     "receipt": str(collected.receipt),
                     "entries": collected.entries,
                 }
-        else:
+        elif args.command == "verl-config":
             print(agent_loop_config_path())
+            return 0
+        else:
+            from .server import ServerError, serve
+
+            try:
+                serve(
+                    model_path=args.model,
+                    adapter_path=args.adapter,
+                    profile_path=args.steering_profile,
+                    model_name=args.model_name,
+                    persona_path=args.persona,
+                    host=args.host,
+                    port=args.port,
+                    api_key=args.api_key,
+                )
+            except ServerError as error:
+                print(f"chock-surgeon: {error}", file=sys.stderr)
+                return 1
             return 0
     except (ContractError, TransformError) as error:
         print(f"chock-surgeon: {error}", file=sys.stderr)

@@ -13,11 +13,14 @@ chock-surgeon inspect rollouts/run-001/case-0-rollout-0.trajectory.json
 chock-surgeon export-verl rollouts/run-001/dataset.json train.jsonl
 chock-surgeon skill inspect skills/review-a-diff
 chock-surgeon skill collect skills/review-a-diff --split train --output rollouts/review-train
+chock-surgeon serve --model /models/qwen --adapter /experiments/haruka/adapter \
+  --steering-profile /experiments/haruka/steering.json
 ```
 
 The base package has no third-party runtime dependencies. Install the `train`
-extra in a veRL environment or the `steer` extra for the local
-PyTorch/Transformers steering adapter.
+extra in a veRL environment, the `steer` extra for the local
+PyTorch/Transformers steering adapter, or the `serve` extra for the local
+OpenAI-compatible inference endpoint.
 
 On Linux, the repository also provides the complete pinned veRL environment:
 

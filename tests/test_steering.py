@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from chock_surgeon.steering import (
     SteeringError,
     SteeringProfile,
+    _qwen_decoder,
     _qwen_layers,
     steering_coefficient,
 )
@@ -36,6 +37,9 @@ class SteeringProfileTests(unittest.TestCase):
         raw = SimpleNamespace(model=SimpleNamespace(layers=layers))
         wrapped = SimpleNamespace(model=raw)
         peft = SimpleNamespace(get_base_model=lambda: raw, model=wrapped)
+        self.assertIs(raw.model, _qwen_decoder(raw))
+        self.assertIs(raw.model, _qwen_decoder(wrapped))
+        self.assertIs(raw.model, _qwen_decoder(peft))
         self.assertIs(layers, _qwen_layers(raw))
         self.assertIs(layers, _qwen_layers(wrapped))
         self.assertIs(layers, _qwen_layers(peft))

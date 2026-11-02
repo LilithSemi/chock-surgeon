@@ -170,8 +170,8 @@ def steering_coefficient(dose: float, residual_norm: float, direction_norm: floa
     return dose * residual_norm / direction_norm
 
 
-def _qwen_layers(model: Any) -> Any:
-    """Resolve the decoder stack through Transformers and PEFT wrappers."""
+def _qwen_decoder(model: Any) -> Any:
+    """Resolve the decoder backbone through Transformers and PEFT wrappers."""
 
     candidates = [model]
     get_base_model = getattr(model, "get_base_model", None)
@@ -184,12 +184,18 @@ def _qwen_layers(model: Any) -> Any:
         for _depth in range(4):
             layers = getattr(current, "layers", None)
             if layers is not None:
-                return layers
+                return current
             nested = getattr(current, "model", None)
             if nested is None or nested is current:
                 break
             current = nested
     raise SteeringError("model does not expose Qwen decoder layers through its model wrapper")
+
+
+def _qwen_layers(model: Any) -> Any:
+    """Resolve the decoder layer sequence through supported model wrappers."""
+
+    return _qwen_decoder(model).layers
 
 
 class SteeringSession:
@@ -243,7 +249,8 @@ def install_qwen_steering(
         raise SteeringError(
             "loaded checkpoint/revision does not exactly match the steering profile"
         )
-    layers = _qwen_layers(model)
+    decoder = _qwen_decoder(model)
+    layers = decoder.layers
     if len(layers) != profile.num_layers:
         raise SteeringError(
             f"profile expects {profile.num_layers} layers, loaded model has {len(layers)}"
@@ -260,7 +267,10 @@ def install_qwen_steering(
         calibration_handles.append(layers[layer_index].register_forward_hook(capture))
     try:
         with torch.inference_mode():
-            model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+            # Calibration needs residuals, not vocabulary logits. Calling the
+            # causal-LM wrapper would materialize [prompt, vocabulary] logits
+            # and can consume several GiB for an agent prompt with many tools.
+            decoder(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
     finally:
         for handle in calibration_handles:
             handle.remove()

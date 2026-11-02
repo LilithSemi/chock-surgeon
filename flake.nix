@@ -415,6 +415,9 @@
         { pkgs, ... }:
         let
           verlEnv = mkVerlEnv pkgs;
+          trainCli = pkgs.writeShellScriptBin "chock-surgeon" ''
+            exec ${verlEnv}/bin/python -m chock_surgeon.cli "$@"
+          '';
         in
         {
           default = pkgs.chock-surgeon.shell;
@@ -423,8 +426,8 @@
           train = pkgs.mkShell {
             name = "chock-surgeon-verl";
             packages = [
+              trainCli
               verlEnv
-              pkgs.chock-surgeon
               pkgs.uv
             ];
             env = {
