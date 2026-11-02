@@ -68,6 +68,24 @@ regression, policy compliance, and unsafe side effects. Personality steering
 and RL remain separate experiment axes so an observed change has a defensible
 cause.
 
+After a transformed checkpoint and an RL adapter pass their separate gates,
+compose the adapter and package the runtime-only steering profile and persona:
+
+```console
+chock-surgeon release \
+  --model output/Qwen-heretic \
+  --adapter output/haruka-adapter \
+  --steering-profile output/steering.json \
+  --persona output/persona.md \
+  --output output/haruka \
+  --name Haruka
+```
+
+The release contains ordinary merged safetensors plus `steering-profile.json`
+and `persona.md`. Its sibling `.chock-surgeon.json` manifest binds every source
+and output file. Neuron steering remains explicit and reversible rather than
+being misrepresented as a weight merge.
+
 The direct built-in abliteration workflow is designed but not implemented yet.
 Surgeon must not describe a checkpoint as merely “uncensored”; the exact
 transform and measured behavioral tradeoffs are the artifact.

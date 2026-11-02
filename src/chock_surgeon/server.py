@@ -119,19 +119,16 @@ class HarukaEngine:
         cls,
         *,
         model_path: Path,
-        adapter_path: Path,
+        adapter_path: Path | None,
         profile_path: Path,
         model_name: str,
         persona_path: Path | None = None,
     ) -> "HarukaEngine":
         try:
             import torch
-            from peft import PeftModel
             from transformers import AutoModelForCausalLM, AutoTokenizer
         except ImportError as error:
-            raise ServerError(
-                "serving requires torch, transformers, and peft; use the training environment"
-            ) from error
+            raise ServerError("serving requires torch and transformers; use the training environment") from error
         profile = SteeringProfile.load(profile_path)
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         base = AutoModelForCausalLM.from_pretrained(
@@ -140,7 +137,14 @@ class HarukaEngine:
             device_map="cuda",
             low_cpu_mem_usage=True,
         )
-        model = PeftModel.from_pretrained(base, adapter_path)
+        if adapter_path is None:
+            model = base
+        else:
+            try:
+                from peft import PeftModel
+            except ImportError as error:
+                raise ServerError("serving a PEFT adapter requires peft") from error
+            model = PeftModel.from_pretrained(base, adapter_path)
         model.eval()
         persona = persona_path.read_text().strip() if persona_path else None
         return cls(
@@ -334,7 +338,7 @@ def create_app(engine: HarukaEngine, *, api_key: str | None = None) -> Any:
 def serve(
     *,
     model_path: Path,
-    adapter_path: Path,
+    adapter_path: Path | None,
     profile_path: Path,
     model_name: str,
     persona_path: Path | None,

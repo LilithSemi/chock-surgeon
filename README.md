@@ -13,6 +13,9 @@ chock-surgeon inspect rollouts/run-001/case-0-rollout-0.trajectory.json
 chock-surgeon export-verl rollouts/run-001/dataset.json train.jsonl
 chock-surgeon skill inspect skills/review-a-diff
 chock-surgeon skill collect skills/review-a-diff --split train --output rollouts/review-train
+chock-surgeon release --model /models/heretic --adapter /experiments/haruka/adapter \
+  --steering-profile /experiments/haruka/steering.json --persona /experiments/haruka/persona.md \
+  --output /models/haruka --name Haruka
 chock-surgeon serve --model /models/qwen --adapter /experiments/haruka/adapter \
   --steering-profile /experiments/haruka/steering.json
 ```

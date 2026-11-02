@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 
 from .trajectory import ChockDataset, ChockTrajectory, ContractError
+from .release import ReleaseError, compose_release
 from .skills import collect_skill, inspect_skill
 from .transforms import HereticPlan, TransformError, run_heretic
 from .verl_adapter import agent_loop_config_path, dataset_rows
@@ -32,6 +33,13 @@ def _parser() -> argparse.ArgumentParser:
     heretic.add_argument("output", type=Path)
     heretic.add_argument("--executable", default="heretic")
     heretic.add_argument("--timeout", type=float, default=24 * 60 * 60)
+    release = commands.add_parser("release", help="merge an adapter into a portable steered model release")
+    release.add_argument("--model", type=Path, required=True)
+    release.add_argument("--adapter", type=Path, required=True)
+    release.add_argument("--steering-profile", type=Path, required=True)
+    release.add_argument("--persona", type=Path, required=True)
+    release.add_argument("--output", type=Path, required=True)
+    release.add_argument("--name", required=True)
     skill = commands.add_parser("skill", help="inspect or collect a Chock training skill")
     skill_commands = skill.add_subparsers(dest="skill_command", required=True)
     skill_inspect = skill_commands.add_parser("inspect", help="verify a skill's training contract")
@@ -44,9 +52,9 @@ def _parser() -> argparse.ArgumentParser:
     collect.add_argument("--parallel", type=int)
     collect.add_argument("--chock-bin", default="chock")
     commands.add_parser("verl-config", help="print the installed veRL agent-loop configuration path")
-    serve = commands.add_parser("serve", help="serve a steered PEFT model through OpenAI Chat Completions")
+    serve = commands.add_parser("serve", help="serve a steered model through OpenAI Chat Completions")
     serve.add_argument("--model", type=Path, required=True)
-    serve.add_argument("--adapter", type=Path, required=True)
+    serve.add_argument("--adapter", type=Path)
     serve.add_argument("--steering-profile", type=Path, required=True)
     serve.add_argument("--model-name", default="haruka-qwen3.5-4b")
     serve.add_argument("--persona", type=Path)
@@ -118,6 +126,22 @@ def main(argv: list[str] | None = None) -> int:
                 "manifest_sha256": result.manifest_sha256,
                 "elapsed_seconds": result.elapsed_seconds,
             }
+        elif args.command == "release":
+            result = compose_release(
+                model_path=args.model,
+                adapter_path=args.adapter,
+                steering_profile_path=args.steering_profile,
+                persona_path=args.persona,
+                output=args.output,
+                name=args.name,
+            )
+            summary = {
+                "schema": "chock-surgeon.release-run",
+                "version": 1,
+                "output": str(result.output),
+                "manifest": str(result.manifest),
+                "manifest_sha256": result.manifest_sha256,
+            }
         elif args.command == "skill":
             if args.skill_command == "inspect":
                 contract = inspect_skill(args.skill_dir, chock_bin=args.chock_bin)
@@ -162,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"chock-surgeon: {error}", file=sys.stderr)
                 return 1
             return 0
-    except (ContractError, TransformError) as error:
+    except (ContractError, ReleaseError, TransformError) as error:
         print(f"chock-surgeon: {error}", file=sys.stderr)
         return 1
     print(json.dumps(summary, sort_keys=True))

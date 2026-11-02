@@ -21,8 +21,8 @@ receipts.
 
 - [steering.md](steering.md) - checkpoint-bound Qwen neuron steering profiles,
   residual-norm calibration, and the local Transformers adapter.
-- [serving.md](serving.md) - serve a PEFT adapter plus steering profile through
-  an OpenAI-compatible endpoint for local Chock sessions.
+- [serving.md](serving.md) - serve an adapter or merged release plus steering
+  profile through an OpenAI-compatible endpoint for local Chock sessions.
 - [transforms.md](transforms.md) - refusal-direction transforms, the audited
   external Heretic workflow, and evaluation of transformed checkpoints.
 

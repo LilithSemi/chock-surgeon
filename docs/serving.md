@@ -1,8 +1,9 @@
 # Serving a steered model
 
-`chock-surgeon serve` exposes a PEFT adapter and an exact steering profile as a
-small OpenAI-compatible Chat Completions service. It is intended for local
-evaluation and Chock integration, not high-throughput production serving.
+`chock-surgeon serve` exposes a model and an exact steering profile as a small
+OpenAI-compatible Chat Completions service. It can load a separate PEFT adapter
+or a release in which the adapter has already been merged. It is intended for
+local evaluation and Chock integration, not high-throughput production serving.
 
 ```console
 chock-surgeon serve \
@@ -19,6 +20,15 @@ on the single loaded model, calibrates the profile's residual norm for each
 prompt, removes the hooks after the response, and translates Qwen tool-call XML
 into OpenAI function calls.
 
+For a merged release, omit `--adapter` and use the packaged runtime inputs:
+
+```console
+chock-surgeon serve \
+  --model /models/haruka \
+  --steering-profile /models/haruka/steering-profile.json \
+  --persona /models/haruka/persona.md
+```
+
 Point Chock at the endpoint with an `openai-compat` provider:
 
 ```zig
@@ -29,5 +39,5 @@ Point Chock at the endpoint with an `openai-compat` provider:
 ```
 
 The model, adapter, persona, and profile paths are deliberately external to the
-source repository. Record their hashes with the evaluation results before
-promoting a deployment.
+source repository. `chock-surgeon release` creates an integrity-bound merged
+directory; its sibling manifest records the source and output hashes.
