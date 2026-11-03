@@ -18,6 +18,11 @@ chock-surgeon release --model /models/heretic --adapter /experiments/haruka/adap
   --output /models/haruka --name Haruka
 chock-surgeon serve --model /models/qwen --adapter /experiments/haruka/adapter \
   --steering-profile /experiments/haruka/steering.json
+chock-surgeon distill --model /models/haruka-teacher \
+  --dataset /experiments/haruka/distillation.json --output /experiments/haruka/baked-adapter
+chock-surgeon release --model /models/haruka-teacher \
+  --adapter /experiments/haruka/baked-adapter --output /models/haruka-baked --name Haruka
+chock-surgeon serve --model /models/haruka-baked
 ```
 
 The base package has no third-party runtime dependencies. Install the `train`

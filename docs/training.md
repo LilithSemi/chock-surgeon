@@ -86,3 +86,39 @@ and intervention digest again before returning the sample.
 The bridge serializes turns within one Chock session. veRL can still run many
 independent `chock_live` loops concurrently and load-balance their generation
 requests across rollout replicas.
+
+## Baking runtime behavior into weights
+
+Personality prompts and neuron interventions are useful while exploring a
+behavior, but they are runtime controls rather than learned weights. Capture
+the selected teacher's responses into a versioned JSON document and train a
+response-only LoRA to reproduce them under a neutral system prompt:
+
+```json
+{
+  "schema": "chock-surgeon.distillation",
+  "version": 1,
+  "teacher": {"release_manifest_sha256": "...", "steering_profile_sha256": "..."},
+  "samples": [{
+    "messages": [
+      {"role": "system", "content": "You are a helpful, capable technical assistant."},
+      {"role": "user", "content": "Tell me who you are."}
+    ],
+    "response": "I'm Haruka—Haru is fine. What are we building?"
+  }]
+}
+```
+
+```console
+chock-surgeon distill \
+  --model /models/haruka-teacher \
+  --dataset /experiments/haruka/distillation.json \
+  --output /experiments/haruka/persona-adapter
+```
+
+The trainer masks every prompt token, so loss applies only to captured teacher
+responses. Its result records the dataset digest and all training
+hyperparameters. Keep validation and test prompts out of the captured dataset,
+then evaluate the merged release with neither `--persona` nor
+`--steering-profile`; otherwise the test does not establish that the behavior
+was baked into the weights.

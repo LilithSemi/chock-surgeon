@@ -1,9 +1,10 @@
 # Serving a steered model
 
-`chock-surgeon serve` exposes a model and an exact steering profile as a small
+`chock-surgeon serve` exposes a local model as a small
 OpenAI-compatible Chat Completions service. It can load a separate PEFT adapter
-or a release in which the adapter has already been merged. It is intended for
-local evaluation and Chock integration, not high-throughput production serving.
+or a release in which the adapter has already been merged, with optional
+runtime persona and neuron-steering controls. It is intended for local
+evaluation and Chock integration, not high-throughput production serving.
 
 ```console
 chock-surgeon serve \
@@ -16,9 +17,10 @@ chock-surgeon serve \
 The default address is `127.0.0.1:5000`. A non-loopback listener is refused
 unless `--api-key` is supplied. The service implements `GET /v1/models` and
 streamed or non-streamed `POST /v1/chat/completions`. It serializes generation
-on the single loaded model, calibrates the profile's residual norm for each
-prompt, removes the hooks after the response, and translates Qwen tool-call XML
-into OpenAI function calls.
+on the single loaded model and translates Qwen tool-call XML into OpenAI
+function calls. When `--steering-profile` is supplied, it calibrates the
+profile's residual norm for each prompt and removes the hooks after the
+response.
 
 For a merged release, omit `--adapter` and use the packaged runtime inputs:
 
@@ -27,6 +29,13 @@ chock-surgeon serve \
   --model /models/haruka \
   --steering-profile /models/haruka/steering-profile.json \
   --persona /models/haruka/persona.md
+```
+
+A distilled release whose behavior is baked into its weights needs neither
+runtime control:
+
+```console
+chock-surgeon serve --model /models/haruka-baked --model-name haruka
 ```
 
 Point Chock at the endpoint with an `openai-compat` provider:

@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 
 from .trajectory import ChockDataset, ChockTrajectory, ContractError
+from .distill import DistillationError, train_distillation
 from .release import ReleaseError, compose_release
 from .skills import collect_skill, inspect_skill
 from .transforms import HereticPlan, TransformError, run_heretic
@@ -33,13 +34,24 @@ def _parser() -> argparse.ArgumentParser:
     heretic.add_argument("output", type=Path)
     heretic.add_argument("--executable", default="heretic")
     heretic.add_argument("--timeout", type=float, default=24 * 60 * 60)
-    release = commands.add_parser("release", help="merge an adapter into a portable steered model release")
+    release = commands.add_parser("release", help="merge an adapter into a portable model release")
     release.add_argument("--model", type=Path, required=True)
     release.add_argument("--adapter", type=Path, required=True)
-    release.add_argument("--steering-profile", type=Path, required=True)
-    release.add_argument("--persona", type=Path, required=True)
+    release.add_argument("--steering-profile", type=Path)
+    release.add_argument("--persona", type=Path)
     release.add_argument("--output", type=Path, required=True)
     release.add_argument("--name", required=True)
+    distill = commands.add_parser("distill", help="bake captured teacher behavior into a LoRA adapter")
+    distill.add_argument("--model", type=Path, required=True)
+    distill.add_argument("--dataset", type=Path, required=True)
+    distill.add_argument("--output", type=Path, required=True)
+    distill.add_argument("--epochs", type=int, default=2)
+    distill.add_argument("--learning-rate", type=float, default=1e-5)
+    distill.add_argument("--rank", type=int, default=16)
+    distill.add_argument("--alpha", type=int, default=32)
+    distill.add_argument("--max-sequence-length", type=int, default=768)
+    distill.add_argument("--gradient-accumulation", type=int, default=4)
+    distill.add_argument("--seed", type=int, default=47)
     skill = commands.add_parser("skill", help="inspect or collect a Chock training skill")
     skill_commands = skill.add_subparsers(dest="skill_command", required=True)
     skill_inspect = skill_commands.add_parser("inspect", help="verify a skill's training contract")
@@ -55,7 +67,7 @@ def _parser() -> argparse.ArgumentParser:
     serve = commands.add_parser("serve", help="serve a steered model through OpenAI Chat Completions")
     serve.add_argument("--model", type=Path, required=True)
     serve.add_argument("--adapter", type=Path)
-    serve.add_argument("--steering-profile", type=Path, required=True)
+    serve.add_argument("--steering-profile", type=Path)
     serve.add_argument("--model-name", default="haruka-qwen3.5-4b")
     serve.add_argument("--persona", type=Path)
     serve.add_argument("--host", default="127.0.0.1")
@@ -142,6 +154,27 @@ def main(argv: list[str] | None = None) -> int:
                 "manifest": str(result.manifest),
                 "manifest_sha256": result.manifest_sha256,
             }
+        elif args.command == "distill":
+            result = train_distillation(
+                model_path=args.model,
+                dataset_path=args.dataset,
+                output=args.output,
+                epochs=args.epochs,
+                learning_rate=args.learning_rate,
+                rank=args.rank,
+                alpha=args.alpha,
+                max_sequence_length=args.max_sequence_length,
+                gradient_accumulation=args.gradient_accumulation,
+                seed=args.seed,
+            )
+            summary = {
+                "schema": "chock-surgeon.distillation-command",
+                "version": 1,
+                "output": str(result.output),
+                "result": str(result.result),
+                "dataset_sha256": result.dataset_sha256,
+                "samples": result.samples,
+            }
         elif args.command == "skill":
             if args.skill_command == "inspect":
                 contract = inspect_skill(args.skill_dir, chock_bin=args.chock_bin)
@@ -186,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"chock-surgeon: {error}", file=sys.stderr)
                 return 1
             return 0
-    except (ContractError, ReleaseError, TransformError) as error:
+    except (ContractError, DistillationError, ReleaseError, TransformError) as error:
         print(f"chock-surgeon: {error}", file=sys.stderr)
         return 1
     print(json.dumps(summary, sort_keys=True))

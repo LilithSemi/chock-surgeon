@@ -1,4 +1,4 @@
-"""A small OpenAI-compatible inference server for steered PEFT models."""
+"""A small OpenAI-compatible inference server for local model releases."""
 
 from dataclasses import dataclass
 import json
@@ -103,7 +103,7 @@ class HarukaEngine:
         *,
         model: Any,
         tokenizer: Any,
-        profile: SteeringProfile,
+        profile: SteeringProfile | None,
         model_name: str,
         persona: str | None,
     ) -> None:
@@ -120,7 +120,7 @@ class HarukaEngine:
         *,
         model_path: Path,
         adapter_path: Path | None,
-        profile_path: Path,
+        profile_path: Path | None,
         model_name: str,
         persona_path: Path | None = None,
     ) -> "HarukaEngine":
@@ -129,7 +129,7 @@ class HarukaEngine:
             from transformers import AutoModelForCausalLM, AutoTokenizer
         except ImportError as error:
             raise ServerError("serving requires torch and transformers; use the training environment") from error
-        profile = SteeringProfile.load(profile_path)
+        profile = SteeringProfile.load(profile_path) if profile_path else None
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         base = AutoModelForCausalLM.from_pretrained(
             model_path,
@@ -190,14 +190,6 @@ class HarukaEngine:
         )
         inputs = self.tokenizer(rendered, return_tensors="pt").to("cuda")
         with self._lock:
-            session = install_qwen_steering(
-                self.model,
-                self.profile,
-                input_ids=inputs.input_ids,
-                attention_mask=inputs.attention_mask,
-                loaded_checkpoint=self.profile.checkpoint,
-                loaded_revision=self.profile.revision,
-            )
             generation_arguments: dict[str, Any] = {
                 "max_new_tokens": max_tokens,
                 "do_sample": temperature > 0,
@@ -205,8 +197,20 @@ class HarukaEngine:
             }
             if temperature > 0:
                 generation_arguments["temperature"] = temperature
-            with session, torch.inference_mode():
-                generated = self.model.generate(**inputs, **generation_arguments)
+            if self.profile is None:
+                with torch.inference_mode():
+                    generated = self.model.generate(**inputs, **generation_arguments)
+            else:
+                session = install_qwen_steering(
+                    self.model,
+                    self.profile,
+                    input_ids=inputs.input_ids,
+                    attention_mask=inputs.attention_mask,
+                    loaded_checkpoint=self.profile.checkpoint,
+                    loaded_revision=self.profile.revision,
+                )
+                with session, torch.inference_mode():
+                    generated = self.model.generate(**inputs, **generation_arguments)
         response_ids = generated[0, inputs.input_ids.shape[1] :]
         text = self.tokenizer.decode(response_ids, skip_special_tokens=True).strip()
         content, tool_calls = parse_qwen_tool_calls(text)
@@ -339,7 +343,7 @@ def serve(
     *,
     model_path: Path,
     adapter_path: Path | None,
-    profile_path: Path,
+    profile_path: Path | None,
     model_name: str,
     persona_path: Path | None,
     host: str,

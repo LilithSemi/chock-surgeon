@@ -86,6 +86,21 @@ and `persona.md`. Its sibling `.chock-surgeon.json` manifest binds every source
 and output file. Neuron steering remains explicit and reversible rather than
 being misrepresented as a weight merge.
 
+Both runtime inputs are optional. After behavior distillation, merge the
+distillation adapter without packaging either input:
+
+```console
+chock-surgeon release \
+  --model output/haruka-teacher \
+  --adapter output/persona-distillation \
+  --output output/haruka-baked \
+  --name Haruka
+```
+
+This creates a release that can be evaluated and served without prompt
+injection or activation hooks. The source teacher controls remain recorded in
+the distillation dataset rather than silently copied into the runtime.
+
 The direct built-in abliteration workflow is designed but not implemented yet.
 Surgeon must not describe a checkpoint as merely “uncensored”; the exact
 transform and measured behavioral tradeoffs are the artifact.
