@@ -31,6 +31,27 @@ def profile_value() -> dict:
     }
 
 
+HIDDEN = 8
+WIDTH = 16
+LAYERS = 3
+
+
+def deepseek_value() -> dict:
+    return {
+        "schema": "chock-surgeon.steering",
+        "version": 1,
+        "checkpoint": "fake/deepseek",
+        "revision": "r0",
+        "model_family": "deepseek_v41",
+        "num_layers": LAYERS,
+        "intermediate_size": WIDTH,
+        "interventions": [
+            {"layer": 0, "neuron": 3, "dose": 1.5},
+            {"layer": 2, "neuron": 5, "dose": -2.0},
+        ],
+    }
+
+
 class SteeringProfileTests(unittest.TestCase):
     def test_qwen_layers_resolves_raw_and_wrapped_models(self) -> None:
         layers = [object(), object()]
@@ -74,6 +95,27 @@ class SteeringProfileTests(unittest.TestCase):
         value["interventions"].append(dict(value["interventions"][0]))
         with self.assertRaisesRegex(SteeringError, "more than once"):
             SteeringProfile.parse(value)
+
+    def test_hook_name_follows_the_model_family(self) -> None:
+        value = deepseek_value()
+        self.assertEqual("deepseek_v41", SteeringProfile.parse(value).model_family)
+        self.assertEqual("mlp.shared_experts.down_proj.input", SteeringProfile.parse(value).hook)
+        value["hook"] = "mlp.shared_experts.down_proj.input"
+        SteeringProfile.parse(value)
+        value["hook"] = "mlp.down_proj.input"
+        with self.assertRaisesRegex(SteeringError, "does not match model family"):
+            SteeringProfile.parse(value)
+        qwen = profile_value()
+        qwen["hook"] = "mlp.shared_experts.down_proj.input"
+        with self.assertRaisesRegex(SteeringError, "does not match model family"):
+            SteeringProfile.parse(qwen)
+
+    def test_unknown_family_is_refused(self) -> None:
+        value = profile_value()
+        value["model_family"] = "deepseek_v5"
+        with self.assertRaisesRegex(SteeringError, "unsupported"):
+            SteeringProfile.parse(value)
+
 
 
 if __name__ == "__main__":

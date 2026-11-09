@@ -19,7 +19,7 @@ receipts.
 
 ## Model interventions
 
-- [steering.md](steering.md) - checkpoint-bound Qwen neuron steering profiles,
+- [steering.md](steering.md) - checkpoint-bound Qwen and DeepSeek V4.1 Flash neuron steering profiles,
   residual-norm calibration, and the local Transformers adapter.
 - [serving.md](serving.md) - serve an adapter or merged release plus steering
   profile through an OpenAI-compatible endpoint for local Chock sessions.

@@ -1,4 +1,4 @@
-"""Reproducible MLP-neuron activation steering for Hugging Face Qwen models."""
+"""Reproducible MLP-neuron activation steering for Hugging Face Qwen and DeepSeek models."""
 
 from __future__ import annotations
 
@@ -12,6 +12,35 @@ from typing import Any, Mapping, Sequence
 
 class SteeringError(ValueError):
     """A steering profile or its target model is not safe to apply."""
+
+
+@dataclass(frozen=True)
+class _Family:
+    decoder_paths: tuple[str, ...]
+    submodule_paths: tuple[str, ...]
+    hook: str
+
+
+# Transformers has no deepseek_v41 module, so the nesting of its text stack is
+# unknown. The resolver tries each path in order and takes the first that fits.
+#
+# DeepSeek steers the shared expert. It runs for every token, so a constant added
+# to it means what a constant added to Qwen's dense MLP means, and token_scope
+# "all" stays true. A routed expert fires only for tokens the router sends to it.
+_FAMILIES: dict[str, _Family] = {
+    "qwen3": _Family(("model",), ("mlp",), "mlp.down_proj.input"),
+    "qwen3.5": _Family(("model",), ("mlp",), "mlp.down_proj.input"),
+    "deepseek_v41": _Family(
+        (
+            "model",
+            "model.language_model",
+            "language_model.model",
+            "language_model",
+        ),
+        ("mlp.shared_experts", "mlp.shared_expert"),
+        "mlp.shared_experts.down_proj.input",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -44,15 +73,18 @@ class SteeringProfile:
         checkpoint = _nonempty(value.get("checkpoint"), "checkpoint")
         revision = _nonempty(value.get("revision"), "revision")
         family = _nonempty(value.get("model_family"), "model_family")
-        if family not in ("qwen3", "qwen3.5"):
+        if family not in _FAMILIES:
             raise SteeringError(f"unsupported steering model family {family!r}")
         layers = _positive_integer(value.get("num_layers"), "num_layers")
         width = _positive_integer(value.get("intermediate_size"), "intermediate_size")
-        hook = value.get("hook", "mlp.down_proj.input")
+        hook = value.get("hook", _FAMILIES[family].hook)
         normalization = value.get("normalization", "median_residual_l2")
         token_scope = value.get("token_scope", "all")
-        if hook != "mlp.down_proj.input":
-            raise SteeringError("only the mlp.down_proj.input hook is currently supported")
+        if hook != _FAMILIES[family].hook:
+            raise SteeringError(
+                f"hook {hook!r} does not match model family {family!r}; "
+                f"expected {_FAMILIES[family].hook!r}"
+            )
         if normalization != "median_residual_l2":
             raise SteeringError("only median_residual_l2 normalization is currently supported")
         if token_scope != "all":
@@ -234,11 +266,116 @@ def install_qwen_steering(
     loaded_checkpoint: str,
     loaded_revision: str,
 ) -> SteeringSession:
+    """Install steering for a Qwen profile. Refuses any other model family."""
+
+    if profile.model_family not in ("qwen3", "qwen3.5"):
+        raise SteeringError(
+            f"install_qwen_steering cannot apply a {profile.model_family!r} profile; "
+            "use install_steering"
+        )
+    return install_steering(
+        model,
+        profile,
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        loaded_checkpoint=loaded_checkpoint,
+        loaded_revision=loaded_revision,
+    )
+
+
+def _walk(root: Any, path: str) -> Any | None:
+    node = root
+    for name in path.split("."):
+        node = getattr(node, name, None)
+        if node is None:
+            return None
+    return node
+
+
+def _roots(model: Any) -> list[Any]:
+    """The model, with a PEFT base model ahead of it when there is one."""
+
+    roots = [model]
+    get_base_model = getattr(model, "get_base_model", None)
+    if callable(get_base_model):
+        base = get_base_model()
+        if base is not model:
+            roots.insert(0, base)
+    return roots
+
+
+def _resolve_decoder(model: Any, family: _Family, expected: int) -> Any:
+    """The module that owns the decoder layers, by the family's candidate paths.
+
+    The generic wrapper descent runs last, so a Qwen model behind a PEFT
+    adapter keeps resolving the way it did before the families existed.
+    """
+
+    wrong: list[str] = []
+    for root in _roots(model):
+        for path in family.decoder_paths:
+            found = _walk(root, path)
+            layers = getattr(found, "layers", None) if found is not None else None
+            if layers is None:
+                continue
+            if len(layers) == expected:
+                return found
+            wrong.append(f"model.{path}.layers has {len(layers)}")
+    try:
+        decoder = _qwen_decoder(model)
+    except SteeringError:
+        decoder = None
+    if decoder is not None:
+        if len(decoder.layers) == expected:
+            return decoder
+        wrong.append(f"the wrapped decoder has {len(decoder.layers)}")
+    tried = ", ".join(f"model.{path}.layers" for path in family.decoder_paths)
+    if wrong:
+        raise SteeringError(
+            f"profile expects {expected} layers, loaded model differs ({'; '.join(wrong)}); "
+            f"candidates tried: {tried}"
+        )
+    raise SteeringError(f"model exposes no decoder layer list; candidates tried: {tried}")
+def _resolve_down_proj(layer: Any, index: int, family: _Family) -> Any:
+    for path in family.submodule_paths:
+        holder = _walk(layer, path)
+        down_proj = getattr(holder, "down_proj", None) if holder is not None else None
+        if down_proj is not None:
+            return down_proj
+    tried = ", ".join(f"{path}.down_proj" for path in family.submodule_paths)
+    raise SteeringError(f"layer {index} has no steerable down_proj; candidates tried: {tried}")
+
+
+_PLAIN_FLOATS = ("float16", "bfloat16", "float32", "float64")
+
+
+def _refuse_quantized(down_proj: Any, index: int) -> None:
+    weight = down_proj.weight
+    scaled = any(
+        getattr(down_proj, name, None) is not None for name in ("weight_scale", "weight_scale_inv")
+    )
+    if scaled or str(weight.dtype).removeprefix("torch.") not in _PLAIN_FLOATS:
+        raise SteeringError(
+            f"layer {index} down_proj looks quantized (weight dtype {weight.dtype}); "
+            "a bf16 checkpoint is required"
+        )
+
+
+def install_steering(
+    model: Any,
+    profile: SteeringProfile,
+    *,
+    input_ids: Any,
+    attention_mask: Any | None = None,
+    loaded_checkpoint: str,
+    loaded_revision: str,
+) -> SteeringSession:
     """Calibrate an unsteered prompt, then steer every subsequent model input.
 
-    This adapter targets Hugging Face Qwen modules. High-throughput veRL
-    backends need an equivalent engine-side hook; silently patching a detached
-    Transformers model would not steer SGLang or vLLM workers.
+    This adapter targets Hugging Face modules of the profile's model family.
+    High-throughput veRL backends need an equivalent engine-side hook;
+    silently patching a detached Transformers model would not steer SGLang or
+    vLLM workers.
     """
 
     try:
@@ -249,14 +386,17 @@ def install_qwen_steering(
         raise SteeringError(
             "loaded checkpoint/revision does not exactly match the steering profile"
         )
-    decoder = _qwen_decoder(model)
+    family = _FAMILIES[profile.model_family]
+    decoder = _resolve_decoder(model, family, profile.num_layers)
     layers = decoder.layers
-    if len(layers) != profile.num_layers:
-        raise SteeringError(
-            f"profile expects {profile.num_layers} layers, loaded model has {len(layers)}"
-        )
 
     target_layers = sorted({one.layer for one in profile.interventions})
+    down_projs: dict[int, Any] = {}
+    for layer_index in target_layers:
+        down_proj = _resolve_down_proj(layers[layer_index], layer_index, family)
+        _refuse_quantized(down_proj, layer_index)
+        down_projs[layer_index] = down_proj
+
     captured: dict[int, Any] = {}
     calibration_handles = []
     for layer_index in target_layers:
@@ -298,8 +438,7 @@ def install_qwen_steering(
     by_layer: dict[int, list[tuple[int, float]]] = {}
     coefficients: dict[tuple[int, int], float] = {}
     for intervention in profile.interventions:
-        down_proj = layers[intervention.layer].mlp.down_proj
-        weight = down_proj.weight
+        weight = down_projs[intervention.layer].weight
         if weight.ndim != 2 or weight.shape[1] != profile.intermediate_size:
             raise SteeringError(
                 f"layer {intervention.layer} down_proj does not have intermediate width "
@@ -328,5 +467,5 @@ def install_qwen_steering(
                 activation[..., neuron].add_(coefficient)
             return (activation, *args[1:])
 
-        handles.append(layers[layer_index].mlp.down_proj.register_forward_pre_hook(inject))
+        handles.append(down_projs[layer_index].register_forward_pre_hook(inject))
     return SteeringSession(profile, handles, residual_norms, coefficients)
