@@ -418,13 +418,15 @@ def install_steering(
     residual_norms: dict[int, float] = {}
     for layer_index in target_layers:
         residual = captured.get(layer_index)
-        if residual is None or residual.ndim != 3 or residual.shape[1] <= 1:
+        if residual is None or residual.ndim not in (3, 4) or residual.shape[1] <= 1:
             raise SteeringError(
                 f"layer {layer_index} did not expose at least two prompt residual tokens"
             )
-        norms = torch.linalg.vector_norm(residual[:, 1:, :].float(), dim=-1)
+        norms = torch.linalg.vector_norm(residual[:, 1:, ...].float(), dim=-1)
         if attention_mask is not None:
             mask = attention_mask[:, 1:].to(device=norms.device, dtype=torch.bool)
+            if norms.ndim == 3:
+                mask = mask.unsqueeze(-1).expand_as(norms)
             norms = norms[mask]
         else:
             norms = norms.reshape(-1)

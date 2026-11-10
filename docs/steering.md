@@ -11,7 +11,9 @@ For Hugging Face Qwen models,
 Library intervention in three steps:
 
 1. Run an unsteered prompt prefill and measure the median residual-stream norm
-   after each selected layer, excluding token 0.
+   after each selected layer, excluding token 0. A model that widens its residual
+   into hyper-connection streams, as DeepSeek V4 does, gives a stream axis, and the
+   median then covers every token and every stream.
 2. Compute `c = dose × residual_norm / norm(W_down[:, neuron])`.
 3. Add `c` to that neuron's `down_proj` input during prefill and every generated
    token. This adds `c × W_down[:, neuron]` to the residual stream.

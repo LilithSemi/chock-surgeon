@@ -87,6 +87,46 @@ def fake_qwen_value() -> dict:
     return value
 
 
+STREAMS = 2
+STREAM_SCALE = torch.linspace(0.5, 1.5, STREAMS).view(1, 1, STREAMS, 1)
+
+
+class HyperLayer(nn.Module):
+    """A layer whose residual carries a hyper-connection stream axis, as DeepSeek V4 does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.mlp = nn.Module()
+        self.mlp.experts = nn.ModuleList([FakeMlp() for _ in range(2)])
+        self.mlp.shared_experts = FakeMlp()
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor]:
+        mixed = x.mean(dim=2)
+        out = self.mlp.shared_experts(mixed) + self.mlp.experts[0](mixed)
+        return (x + out.unsqueeze(2),)
+
+
+class HyperStack(nn.Module):
+    def __init__(self, count: int = LAYERS) -> None:
+        super().__init__()
+        self.embed = nn.Embedding(32, HIDDEN)
+        self.layers = nn.ModuleList([HyperLayer() for _ in range(count)])
+
+    def forward(self, input_ids, attention_mask=None, use_cache=False):
+        x = self.embed(input_ids).unsqueeze(2) * STREAM_SCALE
+        for layer in self.layers:
+            x = layer(x)[0]
+        return x
+
+
+def hyper_fake() -> nn.Module:
+    torch.manual_seed(0)
+    model = nn.Module()
+    model.model = HyperStack()
+    model.forward = model.model.forward
+    return model
+
+
 IDS = torch.tensor([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]])
 MASK = torch.tensor([[1, 1, 1, 1, 1], [1, 1, 1, 0, 0]])
 
@@ -108,9 +148,12 @@ def median_residual_norm(model: nn.Module, layer: nn.Module) -> float:
     with torch.no_grad():
         model(IDS, MASK)
     handle.remove()
-    norms = seen[0][:, 1:, :].norm(dim=-1)[MASK[:, 1:].bool()]
+    norms = seen[0][:, 1:, ...].norm(dim=-1)
+    mask = MASK[:, 1:].bool()
+    if norms.ndim == 3:
+        mask = mask.unsqueeze(-1).expand_as(norms)
+    norms = norms[mask]
     return float(norms.sort().values[(norms.numel() - 1) // 2])
-
 
 class InstallSteeringTests(unittest.TestCase):
     def test_qwen_shaped_model_gets_the_dense_mlp_coefficient(self) -> None:
@@ -226,6 +269,28 @@ class InstallSteeringTests(unittest.TestCase):
         value["intermediate_size"] = 32
         with self.assertRaisesRegex(SteeringError, "intermediate width 32"):
             install(deepseek_fake(), value)
+
+    def test_a_hyper_connection_stream_axis_is_calibrated(self) -> None:
+        model = hyper_fake()
+        layer = model.model.layers[0]
+        residual = median_residual_norm(model, layer)
+        column = layer.mlp.shared_experts.down_proj.weight[:, 3]
+        expected = 1.5 * residual / float(column.detach().norm())
+        with install(model, deepseek_value()) as session:
+            self.assertAlmostEqual(residual, session.residual_norms[0], places=4)
+            self.assertAlmostEqual(expected, session.coefficients[(0, 3)], places=5)
+
+    def test_the_stream_axis_changes_the_calibrated_norm(self) -> None:
+        model = hyper_fake()
+        layer = model.model.layers[0]
+        seen = []
+        handle = layer.register_forward_hook(lambda _m, _a, out: seen.append(out[0]))
+        with torch.no_grad():
+            model(IDS, MASK)
+        handle.remove()
+        one = seen[0][:, 1:, 0, :].norm(dim=-1)[MASK[:, 1:].bool()]
+        first = float(one.sort().values[(one.numel() - 1) // 2])
+        self.assertNotAlmostEqual(first, median_residual_norm(model, layer), places=4)
 
 
 if __name__ == "__main__":
