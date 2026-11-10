@@ -21,6 +21,13 @@ Library intervention in three steps:
 `install_qwen_steering` is a thin wrapper. It refuses a profile that is not
 for Qwen.
 
+DeepSeek has two targets with different module names. The `deepseek_v41` family
+is for a Transformers model, where the expert is `mlp.shared_experts` and the
+projection is `down_proj`. The `deepseek_v41_reference` family is for DeepSeek's
+own `inference/model.py`, where the Transformer holds its layers, the expert is
+`ffn.shared_experts`, the projection is `w2`, and the prompt is passed to the
+decoder positionally.
+
 The installer resolves the decoder stack through both a raw Transformers model
 and a PEFT adapter wrapper, so the same profile can be evaluated on a trained
 LoRA without merging it into the base checkpoint first.

@@ -127,6 +127,49 @@ def hyper_fake() -> nn.Module:
     return model
 
 
+class ReferenceBlock(nn.Module):
+    """A block named the way DeepSeek's own implementation names one."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ffn = nn.Module()
+        self.ffn.experts = nn.ModuleList([FakeMlp() for _ in range(2)])
+        self.ffn.shared_experts = nn.Module()
+        self.ffn.shared_experts.w1 = nn.Linear(HIDDEN, WIDTH, bias=False)
+        self.ffn.shared_experts.w2 = nn.Linear(WIDTH, HIDDEN, bias=False)
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor]:
+        mixed = x.mean(dim=2)
+        shared = self.ffn.shared_experts
+        return (x + shared.w2(torch.relu(shared.w1(mixed))).unsqueeze(2),)
+
+
+class ReferenceStack(nn.Module):
+    """The decoder owns its own layers and takes the prompt positionally, as theirs does."""
+
+    def __init__(self, count: int = LAYERS) -> None:
+        super().__init__()
+        self.embed = nn.Embedding(32, HIDDEN)
+        self.layers = nn.ModuleList([ReferenceBlock() for _ in range(count)])
+
+    def forward(self, input_ids):
+        x = self.embed(input_ids).unsqueeze(2) * STREAM_SCALE
+        for layer in self.layers:
+            x = layer(x)[0]
+        return x
+
+
+def reference_fake() -> nn.Module:
+    torch.manual_seed(0)
+    return ReferenceStack()
+
+
+def reference_value() -> dict:
+    value = deepseek_value()
+    value["model_family"] = "deepseek_v41_reference"
+    return value
+
+
 IDS = torch.tensor([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]])
 MASK = torch.tensor([[1, 1, 1, 1, 1], [1, 1, 1, 0, 0]])
 
@@ -142,11 +185,11 @@ def install(model: nn.Module, value: dict, fn=install_steering):
     )
 
 
-def median_residual_norm(model: nn.Module, layer: nn.Module) -> float:
+def median_residual_norm(model: nn.Module, layer: nn.Module, *, mask_arg: bool = True) -> float:
     seen = []
     handle = layer.register_forward_hook(lambda _m, _a, out: seen.append(out[0]))
     with torch.no_grad():
-        model(IDS, MASK)
+        model(IDS, MASK) if mask_arg else model(IDS)
     handle.remove()
     norms = seen[0][:, 1:, ...].norm(dim=-1)
     mask = MASK[:, 1:].bool()
@@ -291,6 +334,24 @@ class InstallSteeringTests(unittest.TestCase):
         one = seen[0][:, 1:, 0, :].norm(dim=-1)[MASK[:, 1:].bool()]
         first = float(one.sort().values[(one.numel() - 1) // 2])
         self.assertNotAlmostEqual(first, median_residual_norm(model, layer), places=4)
+
+
+    def test_the_reference_implementation_steers_without_a_wrapper(self) -> None:
+        model = reference_fake()
+        layer = model.layers[0]
+        residual = median_residual_norm(model, layer, mask_arg=False)
+        column = layer.ffn.shared_experts.w2.weight[:, 3]
+        expected = 1.5 * residual / float(column.detach().norm())
+        with install(model, reference_value()) as session:
+            self.assertAlmostEqual(residual, session.residual_norms[0], places=4)
+            self.assertAlmostEqual(expected, session.coefficients[(0, 3)], places=5)
+            self.assertEqual(1, len(layer.ffn.shared_experts.w2._forward_pre_hooks))
+
+    def test_a_missing_reference_projection_names_w2(self) -> None:
+        model = reference_fake()
+        del model.layers[0].ffn.shared_experts.w2
+        with self.assertRaisesRegex(SteeringError, "ffn.shared_experts.w2"):
+            install(model, reference_value())
 
 
 if __name__ == "__main__":

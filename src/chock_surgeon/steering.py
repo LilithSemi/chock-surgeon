@@ -19,6 +19,9 @@ class _Family:
     decoder_paths: tuple[str, ...]
     submodule_paths: tuple[str, ...]
     hook: str
+    projection: str = "down_proj"
+    # DeepSeek's own runtime takes the prompt positionally, Transformers takes keywords.
+    keyword_calibration: bool = True
 
 
 # Transformers has no deepseek_v41 module, so the nesting of its text stack is
@@ -39,6 +42,15 @@ _FAMILIES: dict[str, _Family] = {
         ),
         ("mlp.shared_experts", "mlp.shared_expert"),
         "mlp.shared_experts.down_proj.input",
+    ),
+    # DeepSeek's own inference/model.py, where the Transformer holds its layers and the
+    # expert is ffn.shared_experts with w1, w2 and w3 in place of the Transformers names.
+    "deepseek_v41_reference": _Family(
+        ("",),
+        ("ffn.shared_experts",),
+        "ffn.shared_experts.w2.input",
+        projection="w2",
+        keyword_calibration=False,
     ),
 }
 
@@ -284,6 +296,8 @@ def install_qwen_steering(
 
 
 def _walk(root: Any, path: str) -> Any | None:
+    if not path:
+        return root
     node = root
     for name in path.split("."):
         node = getattr(node, name, None)
@@ -329,7 +343,9 @@ def _resolve_decoder(model: Any, family: _Family, expected: int) -> Any:
         if len(decoder.layers) == expected:
             return decoder
         wrong.append(f"the wrapped decoder has {len(decoder.layers)}")
-    tried = ", ".join(f"model.{path}.layers" for path in family.decoder_paths)
+    tried = ", ".join(
+        f"model.{path}.layers" if path else "the model's own layers" for path in family.decoder_paths
+    )
     if wrong:
         raise SteeringError(
             f"profile expects {expected} layers, loaded model differs ({'; '.join(wrong)}); "
@@ -339,10 +355,10 @@ def _resolve_decoder(model: Any, family: _Family, expected: int) -> Any:
 def _resolve_down_proj(layer: Any, index: int, family: _Family) -> Any:
     for path in family.submodule_paths:
         holder = _walk(layer, path)
-        down_proj = getattr(holder, "down_proj", None) if holder is not None else None
+        down_proj = getattr(holder, family.projection, None) if holder is not None else None
         if down_proj is not None:
             return down_proj
-    tried = ", ".join(f"{path}.down_proj" for path in family.submodule_paths)
+    tried = ", ".join(f"{path}.{family.projection}" for path in family.submodule_paths)
     raise SteeringError(f"layer {index} has no steerable down_proj; candidates tried: {tried}")
 
 
@@ -410,7 +426,10 @@ def install_steering(
             # Calibration needs residuals, not vocabulary logits. Calling the
             # causal-LM wrapper would materialize [prompt, vocabulary] logits
             # and can consume several GiB for an agent prompt with many tools.
-            decoder(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+            if family.keyword_calibration:
+                decoder(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+            else:
+                decoder(input_ids)
     finally:
         for handle in calibration_handles:
             handle.remove()
